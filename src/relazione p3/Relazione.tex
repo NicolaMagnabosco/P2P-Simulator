@@ -1,0 +1,77 @@
+\documentclass[10pt]{article}
+  \usepackage[italian]{babel}
+  \usepackage[utf8]{inputenc}
+  \usepackage[T1]{fontenc}
+  \usepackage{geometry}
+  \geometry{a4paper}
+\title{Progetto Programmazione Concorrente e Distribuita}
+\author{Nicola Magnabosco}
+\begin{document}
+\maketitle
+\section{Descrizione Progetto}
+Il progetto realizzato permette lo scambio e la condivisione di risorse, simulando un sistema P2P, dove lo scambio effettivo avviene tra i client connessi al sistema.
+\section{Progettazione}
+Il sistema è formato da: \textit{server} e \textit{client}.
+Ogni client è connesso ad un server e i server sono tutti collegati da loro. Questo permette a un client di ottenere una risorsa che non possiede, che può essere posseduta da un client connesso allo stesso server o un client connesso ad un altro server del sistema.
+\section{Distribuzione}
+Le comunicazioni remote utilizzano il modello RMI. I server del sistema rappresentano oggetti remoti che si registrano nel RMIRegistry, mentre i client si registrano nei vari server.
+Solamente i client possiedono risorse; i server quindi non conoscono come sia implementata una risorsa, ma si riferiscono ad essa solamente tramite il nome e il numero delle parti da cui è formata.
+
+\subsection{Server}
+L'interfaccia {\verb!Server!} estende Remote e rende disponibili vari metodi per la comunicazione con i client.
+
+L'oggetto remoto {\verb!ServerImpl!} implementa l'interfaccia Server e rappresenta i Server del sistema.
+
+Ogni server, al momento della creazione e connessione, si registra nell'\textbf{RmiRegistry}; successivamente, controlla i server già connessi al sistema (attraverso il metodo {\verb!refreshList()!} e li aggiunge alla propria lista di server attivi.
+
+Al momento della disconnessione, il server effettua l'\textbf{unbind} dall'RMIRegistry e comunica agli altri server la sua disconnessione.
+
+\subsubsection{Concorrenza}
+\begin{itemize}
+\item Per ogni richiesta di \textbf{connessione} da parte dei client, il server avvia un \textbf{thread} {\verb!AddClient!}, il quale aggiunge il client alla lista di client attivi.
+\item Per ogni richiesta di disconnessione il server procede nel seguente modo:
+	\begin{itemize}
+		\item avvia un thread {\verb!ControllaRegistroRisorse!} che cancella dal \textbf{Registro Risorse} eventuali risorse possedute solo dal client che ha richiesto la disconnessione, così da mantenere aggiornata la lista delle risorse effettivamente disponibili;
+		\item avvia un thread {\verb!DisconnectClient!} che procede alla disconnessione del client e alla sua rimozione dal registro dei client connessi.
+	\end{itemize}
+\item Ogni qualvolta un client aggiunge una risorsa, questo provvede ad informare il server che una nuova risorsa è disponibile. In particolare si avvia un thread {\verb!AggiungiRisorsaRegistro!} che aggiunge la risorsa qualora il server non la possedesse già;
+
+\item Per ogni richiesta di download, il server offre una lista di client che possiedono la risorsa:
+	\begin{itemize}
+	 	\item il client che richiede la risorsa invoca il metodo {\verb!clientConRisorsa!} sul server al quale è connesso;
+	 	\item il server avvia un thread {\verb!GetClientWithResource!} che popola la lista di client che possiedono la risorsa. Il server ricerca prima nella propria lista risorse e successivamente anche negli altri server del sistema, ritornando tutti i client con la risorsa connessi al sistema.
+	\end{itemize}
+\end{itemize}
+
+\subsubsection{Classe Registro}
+Questa classe rappresenta il registro delle risorse disponibili possedute dai client a lui connessi. Per ogni risorsa tiene conto anche di quanti client la posseggono.
+
+\subsubsection{ClientGUI}
+È l'interfaccia grafica del server. Mostra quali sono i server connessi al sistema e quali sono i client a lui connessi.
+
+\subsection{Client}
+L'interfaccia {\verb!Client!} estende Remote e rende disponibili vari metodi per la comunicazione tra i client e i server del sistema.
+{\verb!ClientImpl!} implementa l'interfaccia Client definiendo l'oggetto client del sistema.
+
+Ogni client ha una lista di risorse possedute e può scaricarne altre ricercandole attraverso il server a cui è connesso.
+
+\subsubsection{Concorrenza}
+Un client può effettuare un download alla volta. Può però scaricare concorrentemente più parti di risorsa da client diversi.
+Ogni volta che si ricerca una risorsa, una volta ottenuta la lista di client che la possiedono si procede al download.
+Il numero di download paralleli dipende dal numero di server che possiedono la risorsa, dalla capacità di download del client e dal numero di parti della risorsa.
+
+\paragraph{Download} il metodo {\verb!download!} calcola quanti download paralleli sono possibili avviare, calcolando il minimo tra (\textit{client disponibili con risorsa, capacità, numero parti risorsa}). Ogni download parallelo è rappresentato da un thread {\verb!DownloadPart!}. Il metodo download crea quindi un thread per ogni parte, prestando attenzione ai seguenti punti:
+\begin{itemize}
+	\item non posso scaricare concorrentemente più parti da un client. Quando un client è occupato nell'upload di una parte, viene inserito in una lista {\verb!ClientAttivi!} e finchè rimarrà in quella lista, non potrà essere utilizzato per scaricare altre parti.
+	\item se ho ancora parti da scaricare, ma non posso lanciare altri thread download paralleli, il metodo {\verb!download!} si mette in wait() su un oggetto {\verb!Object download!}.
+	\item quando un thread finisce di scaricare una parte, libera il client occupato per l'upload e risveglia il metodo {\verb!download!} che era in attesa di avviare il thraed di download
+	\item ll download viene simulato con un tempo di attesa \textbf{configurabile} nel corpo del costruttore di {\verb!ServerImpl!}(di default = 5000)
+	\item lo scaricamento di una parte viene \textbf{simulato} attraverso vettore {\verb!Vector<Boolean>!}, inizializzato a false e di dimension pari al numero di parti della risorsa. Al thread download della risorsa i-esima, viene passata la cella i-esima che verra messa a {\verb!true!} per simulare il download della parte
+	\item una volta completato il download delle parti (tutti i thread download sono terminati), il metodo {\verb!download!} controlla che esse siano state correttamente scaricate, scorrendo il vettore {\verb!Vector<Boolean>!}, controllando che tutte le celle siano state messe a true
+	\item nel caso in cui, durante il download, tutti i client con la risorsa cercata si siano disconnessi, il download della parte terminerà, informando l'utente del mancato scaricamento
+\end{itemize}
+
+\section{Risorsa}
+L'interfaccia {\verb!Risorsa!}, estende Remote viene implementata da {\verb!RisorsaImpl!} che rappresenta l'oggetto Risorsa che viene scambiato tra i vari client.
+Ogni risorsa è formata dal {\verb!nome!} e dal {\verb!numero delle parti!} da cui è formata.
+\end{document}
